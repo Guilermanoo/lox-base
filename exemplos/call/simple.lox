@@ -1,4 +1,2 @@
-// var sqrt = 42;
-print sqrt(9);
-print clock();
-print max(1, 4, "o que o python vai fazer?", 3);
+print sqrt(9) + 0.5;    // expect: 3.5
+print max(1, 4, 3);     // expect: 4

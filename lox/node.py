@@ -20,6 +20,8 @@ from typing import (
     cast,
 )
 
+from lark import Token, Tree
+
 if TYPE_CHECKING:
     from .ast import Class, Function
 
@@ -188,6 +190,31 @@ class Node(ABC):
             elif isinstance(value, (list, tuple)):
                 for item in value:
                     if isinstance(item, Node):
+                        yield item
+
+    def lark_descendents(self) -> Iterable[Tree | Token]:
+        """
+        Retorna todos os descendentes do nó atual.
+
+        O método `lark_descendents` retorna um iterador que percorre todos os
+        descendentes do nó atual que são árvores Lark não transformadas.
+
+        Geralmente desejamos converter todos os nós Lark em nós do AST e esse
+        método ajuda a encontrar nós não-tranformados que podem ter escapado seu
+        Transformer.
+        """
+        for name in self.__annotations__:
+            value = getattr(self, name)
+            if isinstance(value, (Tree, Token)):
+                yield value
+
+            if isinstance(value, Node):
+                yield from value.lark_descendents()
+            elif isinstance(value, (list, tuple)):
+                for item in value:
+                    if isinstance(item, Node):
+                        yield from item.lark_descendents()
+                    elif isinstance(item, (Tree, Token)):
                         yield item
 
     def descendants(self) -> Iterable[Any]:

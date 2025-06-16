@@ -97,9 +97,17 @@ def mod_loader(exercises_folder: Path):
 
 @pytest.fixture
 def parser(expr: bool):
-    if expr:
-        return lox.parse_expr
-    return lox.parse
+    def parser(src: str) -> Expr | Program:
+        ast: Expr | Program
+        if expr:
+            ast = lox.parse_expr(src)
+        ast = lox.parse(src)
+        for subtree in ast.lark_descendents():
+            msg = f"Árvore sintática ainda contém nós Lark: {subtree}"
+            raise ValueError(msg)
+        return ast
+
+    return parser
 
 
 @pytest.fixture
