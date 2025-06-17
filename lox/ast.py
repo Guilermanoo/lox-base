@@ -105,6 +105,10 @@ class Literal(Expr):
         return self.value
 
 
+def is_lox_false(value):
+    return value is False or value is None
+
+
 @dataclass
 class And(Expr):
     """
@@ -113,6 +117,15 @@ class And(Expr):
     Ex.: x and y
     """
 
+    left: Expr
+    right: Expr
+
+    def eval(self, ctx: Ctx):
+        left_value = self.left.eval(ctx)
+        if is_lox_false(left_value):
+            return left_value
+        return self.right.eval(ctx)
+
 
 @dataclass
 class Or(Expr):
@@ -120,6 +133,15 @@ class Or(Expr):
     Uma operação infixa com dois operandos.
     Ex.: x or y
     """
+
+    left: Expr
+    right: Expr
+
+    def eval(self, ctx: Ctx):
+        left_value = self.left.eval(ctx)
+        if not is_lox_false(left_value):
+            return left_value
+        return self.right.eval(ctx)
 
 
 @dataclass
@@ -185,6 +207,14 @@ class Assign(Expr):
     Ex.: x = 42
     """
 
+    var: Var
+    value: Expr
+
+    def eval(self, ctx: Ctx):
+        v = self.value.eval(ctx)
+        ctx[self.var.name] = v
+        return v
+
 
 @dataclass(frozen=True)
 class Getattr(Expr):
@@ -229,7 +259,14 @@ class Print(Stmt):
     
     def eval(self, ctx: Ctx):
         value = self.expr.eval(ctx)
-        print(value)
+        if value is True:
+            print("true")
+        elif value is False:
+            print("false")
+        elif value is None:
+            print("nil")
+        else:
+            print(value)
 
 
 @dataclass
@@ -248,6 +285,14 @@ class VarDef(Stmt):
 
     Ex.: var x = 42;
     """
+
+    name: str
+    value: Expr
+
+    def eval(self, ctx: Ctx):
+        v = self.value.eval(ctx)
+        ctx.scope[self.name] = v  # Cria a variável no escopo atual
+        return v
 
 
 @dataclass
@@ -302,31 +347,3 @@ class Class(Stmt):
 
     Ex.: class B < A { ... }
     """
-
-
-@dataclass
-class Neg(Expr):
-    """
-    Uma operação prefixa que nega o valor de um operando.
-
-    Ex.: -x
-    """
-
-    value: Expr
-
-    def eval(self, ctx: Ctx):
-        return -self.value.eval(ctx)
-
-
-@dataclass
-class Not(Expr):
-    """
-    Uma operação prefixa que inverte o valor de verdade de um booleano.
-
-    Ex.: !x
-    """
-
-    value: Expr
-
-    def eval(self, ctx: Ctx):
-        return not self.value.eval(ctx)

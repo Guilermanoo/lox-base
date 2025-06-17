@@ -1,6 +1,11 @@
 ?start     : program
 
-program    : stmt*
+program    : declaration*
+
+declaration: var_decl
+           | stmt
+
+var_decl   : "var" VAR ("=" expr)? ";"
 
 ?stmt      : expr ";"
            | print_cmd
@@ -11,14 +16,22 @@ setattr_stmt : atom "." VAR "=" expr ";"
 print_cmd  : "print" expr ";"
 
 // EXPRESSÕES
-?expr      : test
+?expr      : assignment
 
-?test      : "!" test        -> not
-           | "-" test        -> neg
+?assignment: VAR "=" assignment   -> assign
+           | or_expr
+
+?or_expr   : and_expr ("or" and_expr)*   -> or_
+?and_expr  : test ("and" test)*          -> and_
+?test      : "!" test        -> not_
+           | "-" test        -> neg_
            | test "==" cmp   -> eq
            | cmp
 
 ?cmp       : cmp ">" factor  -> gt
+           | cmp "<" factor  -> lt
+           | cmp ">=" factor -> ge
+           | cmp "<=" factor -> le
            | factor
 
 ?factor    : factor "+" term -> add
@@ -36,7 +49,6 @@ print_cmd  : "print" expr ";"
            | NIL
            | "(" cmp ")"
 
-call       : VAR "(" params ")"
 params     : [ expr ("," expr )* ]
 
 BOOL.2     : "true" | "false"

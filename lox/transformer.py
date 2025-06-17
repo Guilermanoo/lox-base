@@ -85,10 +85,9 @@ class LoxTransformer(Transformer):
         return Setattr(obj, attr.name, value)
 
     def not_(self, value):
-        print("Método not_ chamado")
         return UnaryOp('!', value)
 
-    def neg(self, value):
+    def neg_(self, value):
         return UnaryOp('-', value)
 
     # Adicionando suporte a operações unárias na árvore sintática
@@ -99,14 +98,25 @@ class LoxTransformer(Transformer):
             return UnaryOp('-', value)
         return value
 
-    def or_(self, left, right):
-        return BinOp(left, right, op.or_)
+    def and_(self, *args):
+        expr = args[0]
+        for next_expr in args[1:]:
+            expr = And(expr, next_expr)
+        return expr
 
-    def and_(self, left, right):
-        return BinOp(left, right, op.and_)
+    def or_(self, *args):
+        expr = args[0]
+        for next_expr in args[1:]:
+            expr = Or(expr, next_expr)
+        return expr
 
-    def not_(self, value):
-        return UnaryOp('!', value)
+    def assign(self, var, value):
+        return Assign(var, value)
 
-    def neg(self, value):
-        return UnaryOp('-', value)
+    def var_decl(self, name, value=None):
+        if value is None:
+            value = Literal(None)
+        return VarDef(name.name, value)
+
+    def declaration(self, node):
+        return node
