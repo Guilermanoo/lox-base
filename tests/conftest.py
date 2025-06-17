@@ -16,7 +16,7 @@ from lox import testing  # noqa: E402
 BASE_DIR = Path(__file__).parent.parent
 EXERCISES = BASE_DIR / "exercicios"
 EXAMPLES = BASE_DIR / "exemplos"
-EXERCISES_ALT = BASE_DIR / "exercícios"
+EXERCISES_ALT = BASE_DIR / "exercicios"
 LEX_REGEX = re.compile(
     r"""
     (?://\ *expect:\ (?P<EXPECT>[^\n]*))

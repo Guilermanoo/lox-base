@@ -4,40 +4,37 @@ program    : stmt*
 
 ?stmt      : expr ";"
            | print_cmd
-           // | if_cmd
-           // | for_cmd
-           // | ...
+           | setattr_stmt
+
+setattr_stmt : atom "." VAR "=" expr ";"
 
 print_cmd  : "print" expr ";"
 
 // EXPRESSÕES
 ?expr      : test
 
-?test      : test "==" cmp  -> eq
-           | test "!=" cmp  -> ne
+?test      : "!" test        -> not
+           | "-" test        -> neg
+           | test "==" cmp   -> eq
            | cmp
 
-?cmp       : cmp ">" factor   -> gt
-           | cmp "<" factor   -> lt
-           | cmp ">=" factor  -> ge
-           | cmp "<=" factor  -> le
+?cmp       : cmp ">" factor  -> gt
            | factor
 
-?factor    : factor "+" term  -> add
-           | factor "-" term  -> sub
+?factor    : factor "+" term -> add
            | term
 
 ?term      : term "*" atom   -> mul
-           | term "/" atom   -> div 
            | atom
 
-?atom      : NUMBER 
+?atom      : atom "." VAR      -> getattr
+           | atom "(" params ")" -> call
+           | NUMBER
            | BOOL
            | VAR
            | STRING
            | NIL
            | "(" cmp ")"
-           | call
 
 call       : VAR "(" params ")"
 params     : [ expr ("," expr )* ]

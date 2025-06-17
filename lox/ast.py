@@ -76,7 +76,7 @@ class BinOp(Expr):
         return self.op(left_value, right_value)
 
 
-@dataclass
+@dataclass(frozen=True)
 class Var(Expr):
     """
     Uma variável no código
@@ -87,10 +87,7 @@ class Var(Expr):
     name: str
 
     def eval(self, ctx: Ctx):
-        try:
-            return ctx[self.name]
-        except KeyError:
-            raise NameError(f"variável {self.name} não existe!")
+        return ctx[self.name]
 
 
 @dataclass
@@ -133,26 +130,33 @@ class UnaryOp(Expr):
     Ex.: -x, !x
     """
 
+    op: str   # Ex: '-' ou '!'
+    value: Expr
 
-@dataclass
+    def eval(self, ctx: Ctx):
+        v = self.value.eval(ctx)
+        if self.op == '-':
+            return -v
+        elif self.op == '!':
+            return not v
+        else:
+            raise RuntimeError(f"Operador unário desconhecido: {self.op}")
+
+
+@dataclass(frozen=True)
 class Call(Expr):
     """
     Uma chamada de função.
 
     Ex.: fat(42)
     """
-    name: str
-    params: list[Expr]
-    
+    func: Expr
+    args: list
+
     def eval(self, ctx: Ctx):
-        func = ctx[self.name]
-        params = []
-        for param in self.params:
-            params.append(param.eval(ctx))
-        
-        if callable(func):
-            return func(*params)
-        raise TypeError(f"{self.name} não é uma função!")
+        func_value = self.func.eval(ctx)
+        arg_values = [arg.eval(ctx) for arg in self.args]
+        return func_value(*arg_values)
 
 
 @dataclass
@@ -182,22 +186,33 @@ class Assign(Expr):
     """
 
 
-@dataclass
+@dataclass(frozen=True)
 class Getattr(Expr):
     """
     Acesso a atributo de um objeto.
 
     Ex.: x.y
     """
+    obj: Expr
+    attr: str
+
+    def eval(self, ctx: Ctx):
+        obj_value = self.obj.eval(ctx)
+        return getattr(obj_value, self.attr)
 
 
 @dataclass
-class Setattr(Expr):
-    """
-    Atribuição de atributo de um objeto.
+class Setattr(Node):
+    obj: Expr
+    attr: str
+    value: Expr
 
-    Ex.: x.y = 42
-    """
+    def eval(self, ctx: Ctx):
+        obj_value = self.obj.eval(ctx)
+        # Só permite setar atributo em instâncias customizadas
+        if isinstance(obj_value, (str, float, bool, type(None))):
+            raise RuntimeError("Only instances have fields.")
+        setattr(obj_value, self.attr, self.value.eval(ctx))
 
 
 #
@@ -287,3 +302,31 @@ class Class(Stmt):
 
     Ex.: class B < A { ... }
     """
+
+
+@dataclass
+class Neg(Expr):
+    """
+    Uma operação prefixa que nega o valor de um operando.
+
+    Ex.: -x
+    """
+
+    value: Expr
+
+    def eval(self, ctx: Ctx):
+        return -self.value.eval(ctx)
+
+
+@dataclass
+class Not(Expr):
+    """
+    Uma operação prefixa que inverte o valor de verdade de um booleano.
+
+    Ex.: !x
+    """
+
+    value: Expr
+
+    def eval(self, ctx: Ctx):
+        return not self.value.eval(ctx)

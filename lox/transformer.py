@@ -12,6 +12,7 @@ from lark import Transformer, v_args
 
 from . import runtime as op
 from .ast import *
+from .ast import UnaryOp
 
 
 def op_handler(op: Callable):
@@ -48,9 +49,9 @@ class LoxTransformer(Transformer):
     ne = op_handler(op.ne)
 
     # Outras expressões
-    def call(self, name: Var, params: list):
-        return Call(name.name, params)
-        
+    def call(self, func, params):
+        return Call(func, params)
+
     def params(self, *args):
         params = list(args)
         return params
@@ -76,3 +77,36 @@ class LoxTransformer(Transformer):
 
     def BOOL(self, token):
         return Literal(token == "true")
+
+    def getattr(self, obj, attr):
+        return Getattr(obj, attr.name)
+
+    def setattr_stmt(self, obj, attr, value):
+        return Setattr(obj, attr.name, value)
+
+    def not_(self, value):
+        print("Método not_ chamado")
+        return UnaryOp('!', value)
+
+    def neg(self, value):
+        return UnaryOp('-', value)
+
+    # Adicionando suporte a operações unárias na árvore sintática
+    def test(self, op, value):
+        if op == '!':
+            return UnaryOp('!', value)
+        elif op == '-':
+            return UnaryOp('-', value)
+        return value
+
+    def or_(self, left, right):
+        return BinOp(left, right, op.or_)
+
+    def and_(self, left, right):
+        return BinOp(left, right, op.and_)
+
+    def not_(self, value):
+        return UnaryOp('!', value)
+
+    def neg(self, value):
+        return UnaryOp('-', value)
