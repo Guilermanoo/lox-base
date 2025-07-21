@@ -3,6 +3,12 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .ctx import Ctx
+from .runtime import (
+    LoxFunction, LoxReturn, print as lox_print,
+    lox_add, lox_sub, lox_mul, lox_div, lox_eq, lox_ne,
+    lox_gt, lox_ge, lox_lt, lox_le, lox_not, lox_neg, truthy,
+    LoxClass, LoxInstance  # Adiciona LoxInstance para exportação
+)
 
 # Declaramos nossa classe base num módulo separado para esconder um pouco de
 # Python relativamente avançado de quem não se interessar pelo assunto.
@@ -10,7 +16,8 @@ from .ctx import Ctx
 # A classe Node implementa um método `pretty` que imprime as árvores de forma
 # legível. Também possui funcionalidades para navegar na árvore usando cursores
 # e métodos de visitação.
-from .node import Node
+from .node import Node, Cursor
+from .errors import SemanticError
 
 
 #
@@ -68,12 +75,33 @@ class BinOp(Expr):
 
     left: Expr
     right: Expr
-    op: Callable[[Value, Value], Value]
+    op: str
 
     def eval(self, ctx: Ctx):
         left_value = self.left.eval(ctx)
         right_value = self.right.eval(ctx)
-        return self.op(left_value, right_value)
+        if self.op == '+':
+            return lox_add(left_value, right_value)
+        elif self.op == '-':
+            return lox_sub(left_value, right_value)
+        elif self.op == '*':
+            return lox_mul(left_value, right_value)
+        elif self.op == '/':
+            return lox_div(left_value, right_value)
+        elif self.op == '==':
+            return lox_eq(left_value, right_value)
+        elif self.op == '!=':
+            return lox_ne(left_value, right_value)
+        elif self.op == '>':
+            return lox_gt(left_value, right_value)
+        elif self.op == '>=':
+            return lox_ge(left_value, right_value)
+        elif self.op == '<':
+            return lox_lt(left_value, right_value)
+        elif self.op == '<=':
+            return lox_le(left_value, right_value)
+        else:
+            raise RuntimeError(f"Operador desconhecido: {self.op}")
 
 
 @dataclass(frozen=True)
@@ -106,7 +134,7 @@ class Literal(Expr):
 
 
 def is_lox_false(value):
-    return value is False or value is None
+    return not truthy(value)
 
 
 @dataclass
@@ -122,7 +150,7 @@ class And(Expr):
 
     def eval(self, ctx: Ctx):
         left_value = self.left.eval(ctx)
-        if is_lox_false(left_value):
+        if not truthy(left_value):
             return left_value
         return self.right.eval(ctx)
 
@@ -139,7 +167,7 @@ class Or(Expr):
 
     def eval(self, ctx: Ctx):
         left_value = self.left.eval(ctx)
-        if not is_lox_false(left_value):
+        if truthy(left_value):
             return left_value
         return self.right.eval(ctx)
 
@@ -158,9 +186,9 @@ class UnaryOp(Expr):
     def eval(self, ctx: Ctx):
         v = self.value.eval(ctx)
         if self.op == '-':
-            return -v
+            return lox_neg(v)
         elif self.op == '!':
-            return not v
+            return lox_not(v)
         else:
             raise RuntimeError(f"Operador unário desconhecido: {self.op}")
 
@@ -188,7 +216,15 @@ class This(Expr):
 
     Ex.: this
     """
+    def eval(self, ctx: Ctx):
+        return ctx["this"]
 
+    def validate_self(self, cursor: Cursor):
+        # Deve ser descendente de algum nó do tipo Class
+        for parent_cursor in cursor.parents():
+            if isinstance(parent_cursor.node, Class):
+                return
+        raise SemanticError("'this' só pode ser usado dentro de métodos de uma classe.")
 
 @dataclass
 class Super(Expr):
@@ -197,77 +233,40 @@ class Super(Expr):
 
     Ex.: super.x
     """
-
-
-@dataclass
-class Assign(Expr):
-    """
-    Atribuição de variável.
-
-    Ex.: x = 42
-    """
-
-    var: Var
-    value: Expr
-
-    def eval(self, ctx: Ctx):
-        v = self.value.eval(ctx)
-        ctx[self.var.name] = v
-        return v
-
-
-@dataclass(frozen=True)
-class Getattr(Expr):
-    """
-    Acesso a atributo de um objeto.
-
-    Ex.: x.y
-    """
-    obj: Expr
     attr: str
 
     def eval(self, ctx: Ctx):
-        obj_value = self.obj.eval(ctx)
-        return getattr(obj_value, self.attr)
+        method_name = self.attr
+        superclass = ctx["super"]
+        this = ctx["this"]
+        method = superclass.get_method(method_name)
+        if method is None:
+            raise RuntimeError(f"Superclasse não tem método '{method_name}'")
+        return method.bind(this)
 
-
-@dataclass
-class Setattr(Node):
-    obj: Expr
-    attr: str
-    value: Expr
-
-    def eval(self, ctx: Ctx):
-        obj_value = self.obj.eval(ctx)
-        # Só permite setar atributo em instâncias customizadas
-        if isinstance(obj_value, (str, float, bool, type(None))):
-            raise RuntimeError("Only instances have fields.")
-        setattr(obj_value, self.attr, self.value.eval(ctx))
-
-
-#
-# COMANDOS
-#
-@dataclass
-class Print(Stmt):
-    """
-    Representa uma instrução de impressão.
-
-    Ex.: print "Hello, world!";
-    """
-    expr: Expr
-    
-    def eval(self, ctx: Ctx):
-        value = self.expr.eval(ctx)
-        if value is True:
-            print("true")
-        elif value is False:
-            print("false")
-        elif value is None:
-            print("nil")
-        else:
-            print(value)
-
+    def validate_self(self, cursor: Cursor):
+        # Deve ser descendente de algum nó do tipo Class que tenha superclasse
+        for parent_cursor in cursor.parents():
+            if isinstance(parent_cursor.node, Class):
+                klass = parent_cursor.node
+                superclass_field = klass.superclass
+                # Desaninha listas/árvores
+                while isinstance(superclass_field, list):
+                    if not superclass_field:
+                        superclass_field = None
+                        break
+                    superclass_field = superclass_field[0]
+                try:
+                    from lark.tree import Tree
+                    if isinstance(superclass_field, Tree):
+                        superclass_field = None
+                except ImportError:
+                    pass
+                if superclass_field is not None:
+                    return
+                else:
+                    raise SemanticError("'super' só pode ser usado em classes que herdam de outra classe.")
+        raise SemanticError("'super' só pode ser usado dentro de métodos de uma classe.")
 
 @dataclass
 class Return(Stmt):
@@ -276,7 +275,18 @@ class Return(Stmt):
 
     Ex.: return x;
     """
+    expr: Expr
 
+    def eval(self, ctx: Ctx):
+        value = self.expr.eval(ctx)
+        raise LoxReturn(value)
+
+    def validate_self(self, cursor: Cursor):
+        # Deve ser descendente de algum nó do tipo Function
+        for parent_cursor in cursor.parents():
+            if isinstance(parent_cursor.node, Function):
+                return
+        raise SemanticError("'return' só pode ser usado dentro de funções.")
 
 @dataclass
 class VarDef(Stmt):
@@ -291,9 +301,16 @@ class VarDef(Stmt):
 
     def eval(self, ctx: Ctx):
         v = self.value.eval(ctx)
-        ctx.scope[self.name] = v  # Cria a variável no escopo atual
+        ctx.var_def(self.name, v)  # Cria a variável no escopo atual
         return v
 
+    def validate_self(self, cursor: Cursor):
+        # Duplicidade no mesmo bloco
+        parent = cursor.parent().node if not cursor.is_root() else None
+        if isinstance(parent, Block):
+            names = [stmt.name for stmt in parent.stmts if isinstance(stmt, VarDef)]
+            if names.count(self.name) > 1:
+                raise SemanticError("variável duplicada no bloco", token=self.name)
 
 @dataclass
 class If(Stmt):
@@ -303,33 +320,50 @@ class If(Stmt):
     Ex.: if (x > 0) { ... } else { ... }
     """
 
+    cond: Expr
+    then_branch: Stmt
+    else_branch: Stmt | None = None
 
-@dataclass
-class For(Stmt):
-    """
-    Representa um laço de repetição.
-
-    Ex.: for (var i = 0; i < 10; i++) { ... }
-    """
+    def eval(self, ctx: Ctx):
+        if truthy(self.cond.eval(ctx)):
+            return self.then_branch.eval(ctx)
+        elif self.else_branch is not None:
+            return self.else_branch.eval(ctx)
+        return None
 
 
 @dataclass
 class While(Stmt):
-    """
-    Representa um laço de repetição.
+    cond: Expr
+    body: Stmt
 
-    Ex.: while (x > 0) { ... }
-    """
+    def eval(self, ctx: Ctx):
+        while self.cond.eval(ctx):
+            self.body.eval(ctx)
 
 
 @dataclass
-class Block(Node):
+class Block(Stmt):
     """
     Representa bloco de comandos.
 
     Ex.: { var x = 42; print x;  }
     """
+    stmts: list[Stmt]
 
+    def eval(self, ctx: Ctx):
+        ctx = ctx.push({})
+        for stmt in self.stmts:
+            stmt.eval(ctx)
+        return None
+
+    def validate_self(self, cursor: Cursor):
+        # Duplicidade de variáveis no bloco
+        names = [stmt.name for stmt in self.stmts if isinstance(stmt, VarDef)]
+        if len(names) != len(set(names)):
+            for name in names:
+                if names.count(name) > 1:
+                    raise SemanticError("variável duplicada no bloco", token=name)
 
 @dataclass
 class Function(Stmt):
@@ -339,6 +373,48 @@ class Function(Stmt):
     Ex.: fun f(x, y) { ... }
     """
 
+    name: str
+    params: list
+    body: Stmt
+
+    def eval(self, ctx: Ctx, register=True):
+        # Corrige casos em que params é um Block vazio
+        if isinstance(self.params, Block):
+            param_names = []
+        else:
+            param_names = [p.name if hasattr(p, 'name') else p for p in self.params]
+        # Garante que body é uma lista de comandos
+        if self.body is None:
+            body_stmts = []
+        elif isinstance(self.body, Block):
+            body_stmts = self.body.stmts
+        elif isinstance(self.body, list):
+            body_stmts = self.body
+        else:
+            body_stmts = [self.body]
+        fn = LoxFunction(
+            name=self.name,
+            args=param_names,
+            body=body_stmts,
+            ctx=ctx
+        )
+        if register:
+            ctx.var_def(self.name, fn)
+        return fn
+
+    def validate_self(self, cursor: Cursor):
+        # Parâmetros duplicados
+        param_names = [p.name if hasattr(p, 'name') else p for p in self.params] if not isinstance(self.params, Block) else []
+        if len(param_names) != len(set(param_names)):
+            for name in param_names:
+                if param_names.count(name) > 1:
+                    raise SemanticError("parâmetro duplicado", token=name)
+        # Variável no corpo com mesmo nome de parâmetro
+        body_stmts = self.body.stmts if isinstance(self.body, Block) else ([self.body] if self.body else [])
+        var_names = [stmt.name for stmt in body_stmts if isinstance(stmt, VarDef)]
+        for name in var_names:
+            if name in param_names:
+                raise SemanticError("variável colide com parâmetro", token=name)
 
 @dataclass
 class Class(Stmt):
@@ -347,3 +423,105 @@ class Class(Stmt):
 
     Ex.: class B < A { ... }
     """
+    name: str
+    superclass: Expr | None
+    methods: list[Function]
+
+    def eval(self, ctx: Ctx):
+        # Corrige superclass: pode vir como lista ou Tree
+        superclass_field = self.superclass
+        while isinstance(superclass_field, list):
+            if not superclass_field:
+                superclass_field = None
+                break
+            superclass_field = superclass_field[0]
+        try:
+            from lark.tree import Tree
+            if isinstance(superclass_field, Tree):
+                superclass_field = None
+        except ImportError:
+            pass
+        superclass = None
+        if superclass_field is not None:
+            superclass = superclass_field.eval(ctx)
+            if not isinstance(superclass, LoxClass):
+                raise SemanticError(f"Superclasse '{superclass}' não é uma classe.")
+        # Cria um novo contexto para o corpo da classe
+        class_ctx = ctx.push({})
+        class_ctx.var_def(self.name, None)
+        # Não pop class_ctx; mantém vivo enquanto a classe existir
+        # Garante que methods é uma lista de Function (desaninha listas)
+        def flatten_methods(methods):
+            result = []
+            for m in methods:
+                if isinstance(m, list):
+                    result.extend(flatten_methods(m))
+                elif hasattr(m, 'name') and hasattr(m, 'params') and hasattr(m, 'body'):
+                    result.append(m)
+            return result
+        methods = flatten_methods(self.methods if self.methods is not None else [])
+        # Herdar métodos da superclasse
+        if superclass is not None:
+            methods_dict = dict(superclass.methods)
+        else:
+            methods_dict = {}
+        # Se houver superclasse, métodos recebem contexto com 'super'
+        if superclass is not None:
+            method_ctx = class_ctx.push({"super": superclass})
+        else:
+            method_ctx = class_ctx
+        for method in methods:
+            if hasattr(method, 'name') and method.name:
+                lox_fn = method.eval(method_ctx, register=False)
+                methods_dict[str(method.name)] = lox_fn
+        klass = LoxClass(self.name, methods_dict, superclass)
+        klass.ctx = class_ctx  # Mantém o contexto vivo
+        class_ctx.assign(self.name, klass)
+        ctx.var_def(self.name, klass)
+        return klass
+
+@dataclass
+class Assign(Stmt):
+    """
+    Representa uma atribuição de variável existente.
+
+    Ex.: x = 42;
+    """
+    name: str
+    value: Expr
+
+    def eval(self, ctx: Ctx):
+        v = self.value.eval(ctx)
+        ctx.assign(self.name, v)
+        return v
+
+    def validate_self(self, cursor: Cursor):
+        # Não permite atribuição a variáveis não declaradas
+        found = False
+        for parent_cursor in cursor.parents():
+            if hasattr(parent_cursor.node, 'stmts'):
+                for stmt in parent_cursor.node.stmts:
+                    if hasattr(stmt, 'name') and stmt.name == self.name:
+                        found = True
+                        break
+            if found:
+                break
+        if not found:
+            raise SemanticError(f"variável '{self.name}' não declarada", token=self.name)
+
+@dataclass
+class Print(Stmt):
+    """
+    Representa um comando de impressão.
+
+    Ex.: print x;
+    """
+    expr: Expr
+
+    def eval(self, ctx: Ctx):
+        value = self.expr.eval(ctx)
+        lox_print(value)
+        return value
+
+    def validate_self(self, cursor: Cursor):
+        pass

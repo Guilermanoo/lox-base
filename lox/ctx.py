@@ -137,6 +137,17 @@ class Ctx:
             return False
         return self.parent.parent is None
 
+    def assign(self, key: str, value: "Value"):
+        """
+        Encontra a ocorrência de key mais próxima do topo da pilha e troca seu valor por value.
+        """
+        if key in self.scope:
+            self.scope[key] = value
+        elif self.parent is not None:
+            self.parent.assign(key, value)
+        else:
+            raise KeyError(f"Variable '{key}' not found in any scope.")
+
 
 def pretty_scope(env: ScopeDict, index: int) -> str:
     """

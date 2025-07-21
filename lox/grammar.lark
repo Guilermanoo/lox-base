@@ -3,59 +3,104 @@
 program    : declaration*
 
 declaration: var_decl
+           | function_decl
+           | class_decl
            | stmt
 
 var_decl   : "var" VAR ("=" expr)? ";"
 
+class_decl : "class" VAR ("<" VAR)? "{" class_body "}"
+class_body : (method_decl)*
+method_decl : VAR "(" params_list? ")" block
+function_decl : "fun" VAR "(" params_list? ")" block
+params_list   : VAR ("," VAR)*
+
 ?stmt      : expr ";"
            | print_cmd
-           | setattr_stmt
-
-setattr_stmt : atom "." VAR "=" expr ";"
+           | block
+           | if_stmt
+           | while_stmt
+           | for_stmt
+           | return_stmt
 
 print_cmd  : "print" expr ";"
+
+block      : "{" declaration* "}"
+
+if_stmt   : "if" "(" expr ")" stmt ("else" stmt)?
+
+while_stmt : "while" "(" expr ")" stmt
+
+for_stmt   : "for" "(" for_init for_cond ";" for_incr ")" stmt
+for_init   : var_decl
+           | expr ";"
+           | ";"      -> empty_init
+for_cond   : expr      -> cond_expr
+           |           -> empty_cond
+for_incr   : expr      -> incr_expr
+           |           -> empty_incr
+
+return_stmt: "return" expr? ";"
 
 // EXPRESSÕES
 ?expr      : assignment
 
-?assignment: VAR "=" assignment   -> assign
+?assignment: call "." VAR "=" assignment   -> setattr_expr
+           | VAR "=" assignment           -> assign
            | or_expr
 
 ?or_expr   : and_expr ("or" and_expr)*   -> or_
-?and_expr  : test ("and" test)*          -> and_
-?test      : "!" test        -> not_
-           | "-" test        -> neg_
-           | test "==" cmp   -> eq
-           | cmp
+?and_expr  : equality ("and" equality)*   -> and_
+?equality  : comparison
+         | equality "==" comparison   -> eq
+         | equality "!=" comparison   -> ne
 
-?cmp       : cmp ">" factor  -> gt
-           | cmp "<" factor  -> lt
-           | cmp ">=" factor -> ge
-           | cmp "<=" factor -> le
-           | factor
+?comparison: addition
+           | comparison ">" addition   -> gt
+           | comparison ">=" addition  -> ge
+           | comparison "<" addition   -> lt
+           | comparison "<=" addition  -> le
 
-?factor    : factor "+" term -> add
-           | term
+?addition  : multiplication
+         | addition "+" multiplication   -> add
+         | addition "-" multiplication   -> sub
 
-?term      : term "*" atom   -> mul
-           | atom
-
-?atom      : atom "." VAR      -> getattr
-           | atom "(" params ")" -> call
-           | NUMBER
+?multiplication: unary
+               | multiplication "*" unary   -> mul
+               | multiplication "/" unary   -> div
+?unary: "!" unary   -> not_
+      | "-" unary   -> neg_
+      | call
+?call: primary
+     | call "(" params ")"   -> call
+     | call "." VAR          -> getattr
+?primary   : NUMBER
            | BOOL
            | VAR
            | STRING
            | NIL
-           | "(" cmp ")"
+           | "this"
+           | "super"
+           | "(" expr ")"
 
 params     : [ expr ("," expr )* ]
 
-BOOL.2     : "true" | "false"
-VAR.1      : /[a-z_]\w*/
+BOOL.10     : "true" | "false"
+NIL.10      : "nil"
+RETURN.10   : "return"
+CLASS.10    : "class"
+FUN.10      : "fun"
+VAR_KW.10   : "var"
+IF.10       : "if"
+ELSE.10     : "else"
+WHILE.10    : "while"
+FOR.10      : "for"
+PRINT.10    : "print"
+SUPER.10    : "super"
+THIS.10     : "this"
+VAR.1      : /[a-zA-Z_][a-zA-Z0-9_]*/
 NUMBER     : /([1-9][0-9]*|0)(\.[0-9]+)?/ 
 STRING     : /"[^"]*"/
-NIL.2      : "nil"
 COMMENT    : "//" /[^\n]*/
 
 %ignore /\s/ | COMMENT
