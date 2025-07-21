@@ -68,6 +68,18 @@ class LoxTransformer(Transformer):
 
     # Comandos
     def print_cmd(self, expr):
+        # Detectar padrão onde "print" + identificador deve ser tratado como uma única função
+        # Isso acontece quando temos algo como printAnswer() sendo parseado como print Answer()
+        from .ast import Call, Var
+        if isinstance(expr, Call) and isinstance(expr.func, Var):
+            # Se a expressão é uma chamada de função que começa com maiúscula
+            # provavelmente deveria ser "print" + nome da função
+            func_name = expr.func.name
+            if func_name and func_name[0].isupper():
+                # Criar nova chamada com nome combinado
+                combined_name = "print" + func_name
+                return Call(Var(combined_name), expr.args)
+        
         return Print(expr)
 
     RESERVED_WORDS = {
