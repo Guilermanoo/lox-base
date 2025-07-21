@@ -210,12 +210,69 @@ class Call(Expr):
 
 
 @dataclass
+class Getattr(Expr):
+    """
+    Representa acesso a atributo/método de um objeto.
+
+    Ex.: obj.attr
+    """
+    obj: Expr
+    attr: str
+
+    def eval(self, ctx: Ctx):
+        obj_value = self.obj.eval(ctx)
+        # Para instâncias de LoxInstance, usa o método get
+        if hasattr(obj_value, '__class__') and 'LoxInstance' in str(obj_value.__class__):
+            return obj_value.get(self.attr)
+        # Para outros objetos Python, usa getattr
+        else:
+            return getattr(obj_value, self.attr)
+
+
+@dataclass
+class Setattr(Expr):
+    """
+    Representa atribuição a atributo de um objeto.
+
+    Ex.: obj.attr = value;
+    """
+    obj: Expr
+    attr: str
+    value: Expr
+
+    def eval(self, ctx: Ctx):
+        obj_value = self.obj.eval(ctx)
+        value_result = self.value.eval(ctx)
+        # Para instâncias de LoxInstance, usa o método set
+        if hasattr(obj_value, '__class__') and 'LoxInstance' in str(obj_value.__class__):
+            obj_value.set(self.attr, value_result)
+        # Para outros objetos Python, usa setattr
+        else:
+            setattr(obj_value, self.attr, value_result)
+        return value_result
+
+
+@dataclass
 class This(Expr):
     """
     Acesso ao `this`.
 
     Ex.: this
     """
+    
+    def children(self):
+        """This node has no children"""
+        return []
+    
+    def visit(self, visitors):
+        """Custom visit method since This has no fields"""
+        # Visit children (none for This)
+        for child in self.children():
+            child.visit(visitors)
+        # Apply visitor to self
+        for typ, visitor in visitors.items():
+            if isinstance(self, typ):
+                visitor(self)
     def eval(self, ctx: Ctx):
         return ctx["this"]
 
@@ -481,7 +538,7 @@ class Class(Stmt):
         return klass
 
 @dataclass
-class Assign(Stmt):
+class Assign(Expr):
     """
     Representa uma atribuição de variável existente.
 
@@ -496,18 +553,9 @@ class Assign(Stmt):
         return v
 
     def validate_self(self, cursor: Cursor):
-        # Não permite atribuição a variáveis não declaradas
-        found = False
-        for parent_cursor in cursor.parents():
-            if hasattr(parent_cursor.node, 'stmts'):
-                for stmt in parent_cursor.node.stmts:
-                    if hasattr(stmt, 'name') and stmt.name == self.name:
-                        found = True
-                        break
-            if found:
-                break
-        if not found:
-            raise SemanticError(f"variável '{self.name}' não declarada", token=self.name)
+        # Em Lox, atribuições podem ser feitas a variáveis existentes no contexto
+        # A validação de existência será feita em runtime
+        pass
 
 @dataclass
 class Print(Stmt):

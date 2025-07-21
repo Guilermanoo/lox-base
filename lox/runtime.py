@@ -54,24 +54,24 @@ class LoxFunction:
     args: list[str]
     body: list["Stmt"]
     ctx: Ctx
+    is_bound_method: bool = False
 
     def __call__(self, *args):
         env = dict(zip(self.args, args, strict=True))
-        env = self.ctx.push(env)
-        is_init = self.name == 'init' and 'this' in env
+        call_ctx = self.ctx.push(env)
+        # Only treat as init constructor if it's a bound method named 'init'
+        is_init = self.name == 'init' and self.is_bound_method and 'this' in call_ctx
         try:
             for stmt in self.body:
-                stmt.eval(env)
+                stmt.eval(call_ctx)
         except LoxReturn as e:
             # Se for init, sempre retorna this
             if is_init:
-                return env['this']
+                return call_ctx['this']
             return e.value
-        finally:
-            self.ctx.pop()
         # Se for init, sempre retorna this
         if is_init:
-            return env['this']
+            return call_ctx['this']
         return None
 
     def bind(self, obj):
@@ -80,7 +80,8 @@ class LoxFunction:
             name=self.name,
             args=self.args,
             body=self.body,
-            ctx=self.ctx.push({'this': obj})
+            ctx=self.ctx.push({'this': obj}),
+            is_bound_method=True
         )
 
 
@@ -108,6 +109,10 @@ class LoxClass:
             # Chama init vinculado à instância
             bound_init = init_method.bind(instance)
             bound_init(*args)
+        else:
+            # Se não há init mas foram passados argumentos, é erro
+            if args:
+                raise RuntimeError(f"Expected 0 arguments but got {len(args)}.")
         return instance
 
     def get_method(self, name: str) -> 'LoxFunction | None':
@@ -126,6 +131,26 @@ class LoxInstance:
     def __init__(self, klass: 'LoxClass'):
         super().__setattr__('klass', klass)
         super().__setattr__('fields', {})
+
+    def get(self, name):
+        """
+        Obtém um atributo ou método da instância.
+        """
+        fields = super().__getattribute__('fields')
+        if name in fields:
+            return fields[name]
+        klass = super().__getattribute__('klass')
+        method = klass.get_method(name)
+        if method is not None:
+            return method.bind(self)
+        raise AttributeError(f"'{klass.name}' instance has no attribute '{name}'")
+
+    def set(self, name, value):
+        """
+        Define um atributo da instância.
+        """
+        fields = super().__getattribute__('fields')
+        fields[name] = value
 
     def __getattr__(self, name):
         fields = super().__getattribute__('fields')

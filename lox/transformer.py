@@ -11,7 +11,7 @@ from typing import Callable
 from lark import Transformer, v_args
 
 from . import runtime as op
-from .ast import BinOp, Block, UnaryOp, Program, Expr, Stmt, Function, Class, Var, Literal, Return, VarDef, If, While, Assign, Block as AstBlock, Print, Call, Getattr, Setattr, And, Or
+from .ast import BinOp, Block, UnaryOp, Program, Expr, Stmt, Function, Class, Var, Literal, Return, VarDef, If, While, Assign, Block as AstBlock, Print, Call, Getattr, Setattr, And, Or, Super, This
 
 
 def op_handler_str(op_str: str):
@@ -31,7 +31,14 @@ def op_handler_str(op_str: str):
 class LoxTransformer(Transformer):
     # Programa
     def program(self, *stmts):
-        return Program(list(stmts))
+        # Flatten nested lists that might come from declarations
+        flat_stmts = []
+        for stmt in stmts:
+            if isinstance(stmt, list):
+                flat_stmts.extend(stmt)
+            else:
+                flat_stmts.append(stmt)
+        return Program(flat_stmts)
 
     # Operações matemáticas básicas
     mul = op_handler_str('*')
@@ -88,10 +95,48 @@ class LoxTransformer(Transformer):
     def BOOL(self, token):
         return Literal(token == "true")
 
+    def primary(self, *args):
+        from lark import Token
+        # Handle empty primary (which usually means a consumed token)
+        if len(args) == 0:
+            # This is likely a THIS token that was consumed somewhere
+            return This()
+        elif len(args) == 1 and isinstance(args[0], Token):
+            if args[0].type == 'THIS':
+                return This()
+            elif args[0].type == 'SUPER':
+                # Super alone doesn't make sense, but we'll handle it
+                return None
+        # For other cases, return the argument as-is
+        return args[0] if len(args) == 1 else args
+
     def getattr(self, obj, attr):
+        # Handle super.attr and this.attr cases
+        from lark import Tree, Token
+        
+        # Special case: empty primary tree usually means a token was consumed but not preserved
+        if isinstance(obj, Tree) and obj.data == 'primary' and len(obj.children) == 0:
+            # This likely means a THIS or SUPER token was processed somewhere else
+            # For now, we'll assume it's THIS since SUPER alone doesn't make sense
+            return Getattr(This(), attr.name)
+        
+        if isinstance(obj, Tree) and obj.data == 'primary' and len(obj.children) == 1:
+            child = obj.children[0]
+            if isinstance(child, Token):
+                if child.type == 'SUPER':
+                    return Super(attr.name)
+                elif child.type == 'THIS':
+                    return Getattr(This(), attr.name)
+        
         return Getattr(obj, attr.name)
 
-    def setattr_stmt(self, obj, attr, value):
+    def setattr_expr(self, obj, attr, value):
+        # Handle this.attr = value case
+        from lark import Tree
+        if isinstance(obj, Tree) and obj.data == 'primary' and len(obj.children) == 0:
+            # This likely means a THIS token was processed somewhere else
+            return Setattr(This(), attr.name, value)
+        
         return Setattr(obj, attr.name, value)
 
     def not_(self, value):
@@ -109,12 +154,18 @@ class LoxTransformer(Transformer):
         return value
 
     def and_(self, *args):
+        # If only one argument, just return it unwrapped
+        if len(args) == 1:
+            return args[0]
         expr = args[0]
         for next_expr in args[1:]:
             expr = And(expr, next_expr)
         return expr
 
     def or_(self, *args):
+        # If only one argument, just return it unwrapped
+        if len(args) == 1:
+            return args[0]
         expr = args[0]
         for next_expr in args[1:]:
             expr = Or(expr, next_expr)
@@ -125,6 +176,9 @@ class LoxTransformer(Transformer):
         from .ast import Setattr, Getattr, Var
         if isinstance(var, Getattr):
             return Setattr(var.obj, var.attr, value)
+        # Se var é um objeto Var, extrai o nome
+        if isinstance(var, Var):
+            return Assign(var.name, value)
         return Assign(var, value)
 
     def var_decl(self, name, value=None):
@@ -133,16 +187,40 @@ class LoxTransformer(Transformer):
         return VarDef(name.name, value)
 
     def declaration(self, node):
+        # If it's a single-item list, unwrap it
+        if isinstance(node, list) and len(node) == 1:
+            return node[0]
         return node
 
     def block(self, *stmts):
-        return Block(list(stmts))
+        # Flatten nested lists that might come from declarations
+        flat_stmts = []
+        for stmt in stmts:
+            if isinstance(stmt, list):
+                flat_stmts.extend(stmt)
+            else:
+                flat_stmts.append(stmt)
+        return Block(flat_stmts)
 
     def if_stmt(self, cond, then_branch, else_branch=None):
         return If(cond, then_branch, else_branch)
 
     def while_stmt(self, cond, body):
         return While(cond, body)
+
+    def return_stmt(self, expr=None):
+        if expr is None:
+            expr = Literal(None)
+        elif isinstance(expr, list):
+            # Deeply flatten nested lists
+            def flatten(lst):
+                if not isinstance(lst, list):
+                    return lst
+                if len(lst) == 1:
+                    return flatten(lst[0])
+                return lst
+            expr = flatten(expr)
+        return Return(expr)
 
     def for_stmt(self, init, cond, incr, body):
         # Açúcar sintático: for (init; cond; incr) body => { init; while (cond) { body; incr } }
@@ -180,12 +258,23 @@ class LoxTransformer(Transformer):
     def empty_incr(self):
         return None
 
-    def setattr_expr(self, obj, attr, value):
-        return Setattr(obj, attr.name, value)
-
-    def method_decl(self, name, params=None, body=None):
+    def method_decl(self, *args):
         from .ast import Block
-        method_name = name.name if hasattr(name, 'name') else str(name)
+        
+        # Handle both cases: individual args or a list
+        if len(args) == 1 and isinstance(args[0], list):
+            args = args[0]
+        
+        name = args[0] if args else None
+        # For methods without parameters, args[1] should be the body directly
+        if len(args) == 2:
+            params = []
+            body = args[1]
+        else:
+            params = args[1] if len(args) > 1 else None
+            body = args[2] if len(args) > 2 else None
+        
+        # Handle params
         if params is None:
             params = []
         elif isinstance(params, Block):
@@ -194,28 +283,77 @@ class LoxTransformer(Transformer):
             params = [p.name if hasattr(p, 'name') else p for p in params]
         else:
             params = [params.name if hasattr(params, 'name') else params]
+            
+        # Handle body
         if body is None:
             body = Block([])
         elif not isinstance(body, Block):
             body = Block([body])
+            
+        method_name = name.name if hasattr(name, 'name') else str(name)
         return Function(method_name, params, body)
 
-    def function_decl(self, name, params=None, body=None):
+    def function_decl(self, *args):
         from .ast import Block
+        
+        # Handle both cases: individual args or a list
+        if len(args) == 1 and isinstance(args[0], list):
+            args = args[0]
+        
+        name = args[0] if args else None
+        # For functions without parameters, args[1] should be the body directly
+        if len(args) == 2:
+            params = []
+            body = args[1]
+        else:
+            params = args[1] if len(args) > 1 else None
+            body = args[2] if len(args) > 2 else None
+        
+        # Handle params
         if params is None:
             params = []
         elif isinstance(params, Block):
             params = []
+            
+        # Handle body
         if body is None:
             body = Block([])
         elif not isinstance(body, Block):
             body = Block([body])
-        return Function(name.name if hasattr(name, 'name') else name, params, body)
+            
+        func_name = name.name if hasattr(name, 'name') else name
+        return Function(func_name, params, body)
 
-    def class_decl(self, name, superclass=None, body=None):
-        # Remove Trees e listas aninhadas de superclass
+    def class_decl(self, *args):
         from lark.tree import Tree
-        # Se não houver superclasse, garantir None
+        from .ast import Function
+        
+        # Handle both cases: individual args or a list
+        if len(args) == 1 and isinstance(args[0], list):
+            args = args[0]
+        
+        name = args[0] if args else None
+        
+        # Determine if there's a superclass by checking arguments
+        if len(args) == 2:
+            # class Name { ... } - no superclass
+            superclass = None
+            body = args[1]
+        elif len(args) == 3:
+            # class Name < Super { ... } or class Name { ... } with complex parsing
+            if isinstance(args[1], list) and all(isinstance(x, Function) for x in args[1]):
+                # It's actually class Name { methods... } - no superclass
+                superclass = None
+                body = args[1]
+            else:
+                # class Name < Super { ... }
+                superclass = args[1]
+                body = args[2]
+        else:
+            superclass = None
+            body = None
+        
+        # Clean up superclass (remove Trees e listas aninhadas)
         if superclass is None or (isinstance(superclass, list) and not superclass):
             superclass = None
         elif isinstance(superclass, list):
@@ -223,20 +361,22 @@ class LoxTransformer(Transformer):
         if isinstance(superclass, Tree):
             superclass = None
         # Se superclass for um método (Function), mas não há '<', deve ser None
-        from .ast import Function
         if isinstance(superclass, Function):
             superclass = None
-        # Garante que body é lista de métodos Function
+            
+        # Handle body/methods
         if body is None:
             methods = []
         elif isinstance(body, list):
-            methods = [m for m in body if hasattr(m, 'name') and hasattr(m, 'params') and hasattr(m, 'body')]
-        elif hasattr(body, 'name') and hasattr(body, 'params') and hasattr(body, 'body'):
+            methods = [m for m in body if isinstance(m, Function)]
+        elif isinstance(body, Function):
             methods = [body]
         else:
             methods = []
+            
+        class_name = name.name if hasattr(name, 'name') else name
         return Class(
-            name=name.name if hasattr(name, 'name') else name,
+            name=class_name,
             superclass=superclass,
             methods=methods
         )
